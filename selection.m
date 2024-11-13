@@ -1,4 +1,4 @@
-function [YY1, YY2, best_dispatch_times] = selection(P, E, s, dispatch_times,L)
+function [YY1, YY2, best_dispatch_times] = selection(P, F, s, dispatch_times,real_fitness)
     [x, y] = size(P); % 目前经历过 crossover、mutation 的 P
     YY1 = zeros(s, y); % 储存良好的染色体
     YY2 = zeros(s, 1); % 良好的适应值
@@ -6,11 +6,10 @@ function [YY1, YY2, best_dispatch_times] = selection(P, E, s, dispatch_times,L)
     e = min(round(s / 4), x); % Number of elite chromosomes to select, 确保不超过现有染色体数量
     %E暫時適存值 L:在現有族群中最大之F值 F:染色體之真實適存值
 
-    F = L - E; % 计算真实适存值：暂时适存值越小，真实适存值越大
     
     % Elite selection
     for i = 1:e
-        c1 = find(F == max(F), 1); % Find index of the best fitness value
+        c1 = find(F == min(F), 1); % Find index of the best fitness value
         
         % Store selected chromosome, fitness value, and dispatch times
         YY1(i, :) = P(c1, :);
