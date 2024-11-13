@@ -4,7 +4,7 @@ function [Y, dispatch_times_new] = crossover(P, t, dispatch_times)
     % 選擇兩個不同的父代染色體
     parent_indices = randperm(num_chromosomes, 2);
     
-    % 選擇父染色體及其對應的派遣時間
+    % 選擇父染色體及其對應的派遣時間q
     parent1 = P(parent_indices(1), :);
     parent2 = P(parent_indices(2), :);
     dispatch_times1 = dispatch_times(parent_indices(1), :);
