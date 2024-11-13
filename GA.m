@@ -22,25 +22,26 @@ tolerance = 0.0001; % 設定適應度變化的容忍值
 
 
 %480->早上8點
-time_windows = [480, 600;
-    480, 600;
-    510, 600;
-    480, 600;
-    480, 600;]; % 每個工地的時間窗(每個工地每天開始、結束時間)
+time_windows = [480, 1440;
+    480, 1440;
+    510, 1440;
+    480, 1440;
+    480, 1440;
+    ]; % 每個工地的時間窗(每個工地每天開始、結束時間)
 % route = [1, 2, 3, 4, 5]; % 染色體示例：工廠到工地的路徑
 
 time = [
     30, 25;  % 去程到工地 1 需要 30 分鐘，回程需要 25 分鐘
     25, 20;  % 去程到工地 2 需要 25 分鐘，回程需要 20 分鐘
     40, 30;  % 去程到工地 3 需要 40 分鐘，回程需要 30 分鐘
-    15, 15;  % 去程到工地 4 需要 35 分鐘，回程需要 30 分鐘
-    35, 30;% 去程到工地 5 需要 20 分鐘，回程需要 15 分鐘
+    15,15;
+    35,30;
     ];
 
 % 定義各工地的參數
-max_interrupt_time = [5, 5, 15,5,5]; % 工地最大容許中斷時間 (分鐘)
+max_interrupt_time = [5,5,15,5,5]; % 工地最大容許中斷時間 (分鐘)
 work_time = [20, 30, 25,10,35]; % 各工地施工時間 (分鐘)
-demand_trips = [2,2,4,4,2]; % 各工地需求車次
+demand_trips = [2,2,4,2,2]; % 各工地需求車次
 penalty = 24*60;% 懲罰值
 
 
@@ -153,7 +154,7 @@ for i = 1:tg
 
 
     %再次評估適應度 計算平均適應度最佳適應度
-    E = evaluation(P, t, time_windows, num_sites, dispatch_times, work_time, time, max_interrupt_time, penalty); % 評估族群 P 中每個染色體的適應度
+    [E, all_dispatch_times] = evaluation(P, t, time_windows, num_sites, dispatch_times, work_time, time, max_interrupt_time, penalty); % 評估族群 P 中每個染色體的適應度
 
     % R=max(E);
     % [F, P] = realvalue(P, E, R);
@@ -173,21 +174,21 @@ end
 
 % 提取最佳適應度值和最優解
 best_chromosome = P(index, :); % 提取基因部分
-best_chromosome_dispatch_times=best_dispatch_times(index, :);
+best_dispatch_times = all_dispatch_times(index, :);
 
 
 disp('Best Chromosome:');
 disp(best_chromosome);
 
 disp('Best Dispatch Times:');
-disp(best_chromosome_dispatch_times);
+disp(best_dispatch_times);
 
-best_chromosome_evaluation = evaluation(best_chromosome, t, time_windows, num_sites, best_chromosome_dispatch_times, work_time, time, max_interrupt_time, penalty);
+best_chromosome_evaluation = evaluation(best_chromosome, t, time_windows, num_sites, best_dispatch_times, work_time, time, max_interrupt_time, penalty);
 disp('Best Evaluation:');
 disp(best_chromosome_evaluation);
 
 %解碼最佳解為派車計劃
-dispatch_plan = decode_chromosome(best_chromosome, best_chromosome_dispatch_times, num_sites, demand_trips, time_windows, work_time, time);
+dispatch_plan = decode_chromosome(best_chromosome, best_dispatch_times, t, demand_trips, time_windows, work_time, time);
 
 % 展示派車順序表
 vehicle_ids = dispatch_plan(:, 1);
@@ -230,105 +231,90 @@ uitable('Data', table2cell(dispatch_data), 'ColumnName', dispatch_data.Propertie
     'RowName', [], 'Position', [20 20 800 400]);
 
 % 解码函数
-function plan = decode_chromosome(chromosome, dispatch_times, t, demand_trips, time_windows,  work_time, time)
-fprintf('Chromosome:\n');
-disp(chromosome);  % 或者你可以使用 disp 來簡單地顯示矩陣
-total_trips = sum(demand_trips);
-site_ids = zeros(total_trips, 1);
-actual_dispatch_times = zeros(total_trips, 1);
-travel_times_to = zeros(total_trips, 1);
-arrival_times = zeros(total_trips, 1);
-site_set_start_times = zeros(total_trips, 1);
-work_start_times = zeros(total_trips, 1);
-work_times = zeros(total_trips, 1);
-site_finish_times = zeros(total_trips, 1);
-travel_times_back = zeros(total_trips, 1);
-return_times = zeros(total_trips, 1);
-truck_waiting_times = zeros(total_trips, 1);
-site_waiting_times = zeros(total_trips, 1);
+% 修改 decode_chromosome 函數的開頭部分
+function plan = decode_chromosome(chromosome, dispatch_times, t, demand_trips, time_windows, work_time, time)
+    fprintf('Chromosome:\n');
+    disp(chromosome);
+    
+    total_trips = sum(demand_trips);
+    site_ids = zeros(total_trips, 1);
+    actual_dispatch_times = zeros(total_trips, 1);
+    travel_times_to = zeros(total_trips, 1);
+    arrival_times = zeros(total_trips, 1);
+    site_set_start_times = zeros(total_trips, 1);
+    work_start_times = zeros(total_trips, 1);
+    work_times = zeros(total_trips, 1);
+    site_finish_times = zeros(total_trips, 1);
+    travel_times_back = zeros(total_trips, 1);
+    return_times = zeros(total_trips, 1);
+    truck_waiting_times = zeros(total_trips, 1);
+    site_waiting_times = zeros(total_trips, 1);
 
-% 初始化每个工地的派遣信息
-site_dispatch_info = zeros(total_trips, 4); % [site_id, truck_id, dispatch_time, arrival_time, work_start_time]
+    % 初始化卡車可用時間
+    truck_availability = zeros(t, 1);
 
-% 在循环外生成有序的 dispatch_times
-% 生成 420 到 620 之间的随机时间，并进行排序
-% plan_dispatch_time = sort(420 + randi([1, 200], total_trips, 1));
+    for i = 1:total_trips
+        site_ids(i) = chromosome(1,i);
+        site_id = site_ids(i);
 
-% 初始化卡车可用时间
-truck_availability = zeros(t, 1); % 每个卡车的可用时间
+        % % 使用傳入的 dispatch_times，而不是重新計算
+        % actual_dispatch_times(i) = dispatch_times(i);
 
-for i = 1:total_trips  %目前14
-    site_ids(i) = chromosome(1,i);        % 当前的工地ID
-    site_id = site_ids(i);                % 当前工地
+        % 獲取各個時間參數
+        travel_times_to(i) = time(site_id,1);
+        travel_times_back(i) = time(site_id,2);
+        site_set_start_times(i) = time_windows(site_id,1);
+        work_times(i) = work_time(site_id);
 
-    % 获取各个时间参数
-    travel_times_to(i) = time(site_id,1);
-    travel_times_back(i) = time(site_id,2);
-    site_set_start_times(i) = time_windows(site_id,1);
-    work_times(i) = work_time(site_id);
-
-    if i <= t
-        % 初期卡车的派遣
-        truck_id = i;
-        actual_dispatch_times(i) = dispatch_times(i);  % 实际派遣时间等于计划时间
-        arrival_times(i) = actual_dispatch_times(i) + travel_times_to(i);  % 到达时间
-        work_start_times(i) = max(arrival_times(i), site_set_start_times(site_ids(i)));  % 工作开始时间
-    else
-        % 后续卡车的派遣
-        [next_available_time, truck_id] = min(truck_availability);  % 下一个可用卡车及其可用时间
-        actual_dispatch_times(i) = next_available_time;  % 计算实际派遣时间
-        arrival_times(i) = actual_dispatch_times(i) + travel_times_to(i);  % 计算到达时间
-    end
-
-    % 检查之前是否有卡车在该工地工作
-    previous_work_idx = find(site_ids(1:i-1) == site_ids(i), 1, 'last');  % 查找前一辆卡车的工作记录
-    if isempty(previous_work_idx)
-        % 如果这是该工地的第一台卡车
-        work_start_times(i) = max(arrival_times(i), site_set_start_times(i));  % 工作开始时间为到达时间或工地的开始时间
-    else
-        % 如果已经有卡车到过该工地，设置当前卡车的工作开始时间为前一台卡车的完成时间
-        work_start_times(i) = max(arrival_times(i), site_finish_times(previous_work_idx));  % 工作开始时间为到达时间或前一辆卡车的完成时间
-    end
-
-    % 提前计算工地完成时间和卡车返回时间
-    site_finish_times(i) = work_start_times(i) + work_times(i);  % 工地的完成时间
-    return_times(i) = site_finish_times(i) + travel_times_back(i);  % 卡车返回时间
-    truck_availability(truck_id) = return_times(i);  % 更新卡车的可用时间
-
-    % 计算等待时间
-    if ~isempty(previous_work_idx)
-        % 如果之前有车已经到过该工地，判断是卡车等待还是工地等待
-        if arrival_times(i) < site_finish_times(previous_work_idx)
-            truck_waiting_times(i) = site_finish_times(previous_work_idx) - arrival_times(i);
-        elseif arrival_times(i) > site_finish_times(previous_work_idx)
-            site_waiting_times(i) = arrival_times(i) - site_finish_times(previous_work_idx);
-        end
-    else
-        % 第一次到该工地
-        if arrival_times(i) < site_set_start_times(i)
-            truck_waiting_times(i) = site_set_start_times(i) - arrival_times(i);
+        % 設計工地派遣時間
+        if i <= t
+            % 前 t 台車使用給定的派遣時間
+            actual_dispatch_times(i) = dispatch_times(i);
+            truck_id = i;
         else
-            site_waiting_times(i) = arrival_times(i) - site_set_start_times(i);
+            % t 台車之後，找出最早可用的車輛
+            [next_available_time, truck_id] = min(truck_availability);
+            actual_dispatch_times(i) = next_available_time;  % 使用最早可用時間作為派遣時間
         end
+
+        % 計算到達時間
+        arrival_times(i) = actual_dispatch_times(i) + travel_times_to(i);
+
+        % 檢查之前是否有卡車在該工地工作
+        previous_work_idx = find(site_ids(1:i-1) == site_ids(i), 1, 'last');
+        if isempty(previous_work_idx)
+            work_start_times(i) = max(arrival_times(i), site_set_start_times(i));
+        else
+            work_start_times(i) = max(arrival_times(i), site_finish_times(previous_work_idx));
+        end
+
+        % 計算工地完成時間和卡車返回時間
+        site_finish_times(i) = work_start_times(i) + work_times(i);
+        return_times(i) = site_finish_times(i) + travel_times_back(i);
+        truck_availability(truck_id) = return_times(i);  % 更新該台車的可用時間
+
+        % 計算等待時間
+        if ~isempty(previous_work_idx)
+            if arrival_times(i) < site_finish_times(previous_work_idx)
+                truck_waiting_times(i) = site_finish_times(previous_work_idx) - arrival_times(i);
+            elseif arrival_times(i) > site_finish_times(previous_work_idx)
+                site_waiting_times(i) = arrival_times(i) - site_finish_times(previous_work_idx);
+            end
+        else
+            if arrival_times(i) < site_set_start_times(i)
+                truck_waiting_times(i) = site_set_start_times(i) - arrival_times(i);
+            else
+                site_waiting_times(i) = arrival_times(i) - site_set_start_times(i);
+            end
+        end
+
+        % 打印調試信息
+        fprintf('Trip %d: Site %d, Dispatch: %f, Arrival: %f, Work Start: %f, Return: %f\n', ...
+            i, site_ids(i), actual_dispatch_times(i), arrival_times(i), work_start_times(i), return_times(i));
     end
 
-    % 更新工地的调度信息
-    idx = find(site_dispatch_info(:, 1) == site_id, 1, 'last') + 1;  % 找到该工地调度信息的最后一行
-    if isempty(idx)
-        idx = 1;
-    end
-    site_dispatch_info(idx, :) = [site_ids(i), truck_id,  arrival_times(i), work_start_times(i)];
-
-    % 打印调试信息
-    fprintf('Trip %d: Site %d, Actual Dispatch: %f, Arrival: %f, Work Start: %f, Return: %f\n', ...
-        i, site_ids(i), actual_dispatch_times(i), arrival_times(i), work_start_times(i), return_times(i));
-end
-
-
-
-
-vehicle_ids = (1:total_trips)';
-plan = [vehicle_ids, site_ids,  actual_dispatch_times, travel_times_to, arrival_times, site_set_start_times, work_start_times, work_times, site_finish_times, travel_times_back, return_times,truck_waiting_times, site_waiting_times];
+    vehicle_ids = (1:total_trips)';
+    plan = [vehicle_ids, site_ids, actual_dispatch_times, travel_times_to, arrival_times, site_set_start_times, work_start_times, work_times, site_finish_times, travel_times_back, return_times, truck_waiting_times, site_waiting_times];
 end
 
 
